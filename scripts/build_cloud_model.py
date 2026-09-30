@@ -107,7 +107,9 @@ def batch(step):
 
 
 model.train()
-bootstrap_steps = int(os.environ.get("DEMO_AI_BOOTSTRAP_STEPS", "64"))\nprint("bootstrap training steps:", bootstrap_steps, flush=True)\nfor step in range(bootstrap_steps):
+bootstrap_steps = int(os.environ.get("DEMO_AI_BOOTSTRAP_STEPS", "64"))
+print("bootstrap training steps:", bootstrap_steps, flush=True)
+for step in range(bootstrap_steps):
     x, y = batch(step)
     opt.zero_grad(set_to_none=True)
     logits, aux = model(x, return_aux=True)
