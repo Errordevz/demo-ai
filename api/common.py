@@ -5,7 +5,7 @@ import json
 import secrets
 import threading
 
-from api.runtime import build_prompt, get_model, rate_limiter
+from api.runtime import build_prompt, get_model, rate_limiter, _inference_lock
 
 
 _api_key_hashes = set()
@@ -125,13 +125,22 @@ def handle_chat(h, require_key=False):
         if not clean:
             raise ValueError("No usable messages were provided.")
 
-        answer = get_model().generate(
-            build_prompt(clean),
-            max_new=data.get("max_new", 96),
-            temperature=data.get("temperature", 0.7),
-            top_k=data.get("top_k", 40),
-            seed=data.get("seed"),
-        )
+        model = get_model()
+        requested_max = int(data.get("max_new", 20))
+        max_new = min(max(requested_max, 1), 64 if require_key else 24)
+        requested_top_k = int(data.get("top_k", 24))
+        top_k = min(max(requested_top_k, 1), 64)
+
+        # Demo AI is CPU-hosted on a small instance. Serialize generation so
+        # simultaneous requests cannot multiply CPU/RAM pressure.
+        with _inference_lock:
+            answer = model.generate(
+                build_prompt(clean),
+                max_new=max_new,
+                temperature=data.get("temperature", 0.7),
+                top_k=top_k,
+                seed=data.get("seed"),
+            )
         model = get_model()
         json_response(
             h,
