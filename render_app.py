@@ -1,18 +1,39 @@
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from __future__ import annotations
+
+import mimetypes
 import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
 
 from api.common import handle_chat, json_response
+
+ROOT = Path(__file__).resolve().parent
+
+STATIC = {
+    "/": "index.html",
+    "/index.html": "index.html",
+    "/styles.css": "styles.css",
+    "/app.js": "app.js",
+}
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        if self.path.startswith("/api/v1/chat"):
-            handle_chat(self, True)
+        path = urlparse(self.path).path
+        if path in {"/api/chat", "/api/key", "/api/v1/chat"}:
+            handle_chat(self, path == "/api/v1/chat")
         else:
             json_response(self, {"ok": True})
 
     def do_GET(self):
-        if self.path == "/api/status":
+        path = urlparse(self.path).path
+
+        if path == "/health":
+            json_response(self, {"ok": True})
+            return
+
+        if path == "/api/status":
             json_response(
                 self,
                 {
@@ -26,23 +47,88 @@ class Handler(BaseHTTPRequestHandler):
                     "top_k": 2,
                     "active_expert_fraction": 0.5,
                     "cloud_chat": True,
+                    "api_key_required_for_web_chat": False,
+                    "api_key_required_for_developer_api": True,
+                    "checkpoint_status": "development",
                 },
             )
-        elif self.path == "/health":
-            json_response(self, {"ok": True})
-        else:
-            json_response(self, {"ok": True, "service": "Demo AI"})
+            return
+
+        if path == "/api/chat":
+            json_response(
+                self,
+                {
+                    "ok": True,
+                    "model": "demo-ai-100m-moe",
+                    "architecture": "sparse_moe",
+                    "experts": 4,
+                    "top_k": 2,
+                    "auth": "not_required_for_web_chat",
+                },
+            )
+            return
+
+        if path == "/api/v1/chat":
+            json_response(
+                self,
+                {
+                    "ok": True,
+                    "model": "demo-ai-100m-moe",
+                    "architecture": "sparse_moe",
+                    "experts": 4,
+                    "top_k": 2,
+                    "auth": "DEMO_AI_KEY_required",
+                },
+            )
+            return
+
+        filename = STATIC.get(path)
+        if filename:
+            self._serve_static(filename)
+            return
+
+        json_response(self, {"ok": False, "error": "not_found"}, 404)
 
     def do_POST(self):
-        if self.path == "/api/chat":
+        path = urlparse(self.path).path
+
+        if path == "/api/chat":
             handle_chat(self, False)
-        elif self.path == "/api/v1/chat":
+            return
+
+        if path == "/api/v1/chat":
             handle_chat(self, True)
-        elif self.path == "/api/key":
-            from api.key import handler as KeyHandler
-            KeyHandler.do_POST(self)
-        else:
+            return
+
+        if path == "/api/key":
+            from api.key import generate_key_response
+
+            generate_key_response(self)
+            return
+
+        json_response(self, {"ok": False, "error": "not_found"}, 404)
+
+    def _serve_static(self, filename):
+        target = (ROOT / filename).resolve()
+        if ROOT not in target.parents and target != ROOT:
+            json_response(self, {"error": "forbidden"}, 403)
+            return
+        if not target.is_file():
             json_response(self, {"error": "not_found"}, 404)
+            return
+
+        body = target.read_bytes()
+        content_type, _ = mimetypes.guess_type(str(target))
+        if target.suffix == ".js":
+            content_type = "application/javascript"
+        content_type = content_type or "application/octet-stream"
+
+        self.send_response(200)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=300")
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, fmt, *args):
         return
