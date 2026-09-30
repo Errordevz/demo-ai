@@ -20,7 +20,10 @@ class RotaryEmbedding(nn.Module):
         super().__init__()
         inv=1/(theta**(torch.arange(0,head_dim,2).float()/head_dim))
         t=torch.arange(max_seq_len,dtype=torch.float32)
-        f=torch.outer(t,inv); e=torch.cat((f,f),dim=-1)
+        f=torch.outer(t,inv)
+        # rotate_half() operates on adjacent pairs, so duplicate each frequency
+        # as [f0,f0,f1,f1,...], not [f0,f1,...,f0,f1,...].
+        e=torch.stack((f,f),dim=-1).reshape(max_seq_len,head_dim)
         self.register_buffer("cos",e.cos()[None,None,:,:],persistent=False)
         self.register_buffer("sin",e.sin()[None,None,:,:],persistent=False)
     def forward(self,q,k,start_pos=0):
@@ -72,7 +75,8 @@ class Block(nn.Module):
     def __init__(self,cfg):
         super().__init__(); self.norm1=RMSNorm(cfg.emb_dim); self.attn=GQA(cfg); self.norm2=RMSNorm(cfg.emb_dim); self.ffn=SwiGLU(cfg)
     def forward(self,x,past=None,use_cache=False):
-        a,p=self.attn(self.norm1(x),past_kv=past,use_cache=use_cache); x=x+a; x=x+self.ffn(self.norm2(x)); return x,p
+        a,p=self.attn(self.norm1(x),past_kv=past,use_cache=use_cache)
+        x=x+a; x=x+self.ffn(self.norm2(x)); return x,p
 
 class DemoAI(nn.Module):
     def __init__(self,cfg=None):
@@ -91,7 +95,7 @@ class DemoAI(nn.Module):
         x=self.tok_emb(input_ids); presents=[]
         for i,b in enumerate(self.blocks):
             past=None if past_kvs is None else past_kvs[i]
-            x,p=b(x,past,use_cache); 
+            x,p=b(x,past,use_cache)
             if use_cache: presents.append(p)
         logits=self.lm_head(self.final_norm(x))
         return (logits,presents) if use_cache else logits
