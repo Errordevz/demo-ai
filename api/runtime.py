@@ -17,15 +17,9 @@ MODEL_DIR = Path(os.getenv("DEMO_AI_MODEL_DIR", ROOT / "model"))
 
 
 class QuantStore:
-    """
-    Lazy INT4 -> float32 dequantization.
+    """INT4 storage with bounded float32 caches for CPU inference."""
 
-    Shared/attention tensors stay cached because they are used for every token.
-    Expert tensors use a bounded LRU so the 100M model does not require keeping
-    every expert expanded to float32 in RAM at once.
-    """
-
-    def __init__(self, root: Path, max_expert_tensors: int = 72):
+    def __init__(self, root: Path, max_expert_tensors: int = 48):
         self.manifest = json.loads((root / "manifest.json").read_text())
         self.mm = np.memmap(root / "weights.bin", mode="r", dtype=np.uint8)
         self.shared_cache = {}
@@ -35,10 +29,7 @@ class QuantStore:
 
     def _dequantize(self, meta):
         raw = np.frombuffer(
-            self.mm,
-            dtype=np.uint8,
-            count=meta["nbytes"],
-            offset=meta["offset"],
+            self.mm, dtype=np.uint8, count=meta["nbytes"], offset=meta["offset"]
         )
         lo = raw & 0x0F
         hi = raw >> 4
@@ -46,41 +37,31 @@ class QuantStore:
         vals[0::2] = lo.astype(np.int8) - 8
         vals[1::2] = hi.astype(np.int8) - 8
         vals = vals[: meta["count"]].reshape(meta["shape"])
-
         scales = np.frombuffer(
             self.mm,
             dtype=np.float32,
             count=meta["shape"][0],
             offset=meta["scale_offset"],
         )
-
         if meta.get("ndim", len(meta["shape"])) == 1:
             return vals.astype(np.float32) * scales.astype(np.float32)
-
         return vals.astype(np.float32) * scales.astype(np.float32)[:, None]
 
     def weight(self, key):
-        if ".moe.experts." in key:
-            with self.lock:
-                cached = self.expert_cache.get(key)
-                if cached is not None:
-                    self.expert_cache.move_to_end(key)
-                    return cached
-                meta = self.manifest["tensors"][key]
-                result = self._dequantize(meta)
-                self.expert_cache[key] = result
-                self.expert_cache.move_to_end(key)
-                while len(self.expert_cache) > self.max_expert_tensors:
-                    self.expert_cache.popitem(last=False)
-                return result
-
+        expert = ".moe.experts." in key
+        cache = self.expert_cache if expert else self.shared_cache
         with self.lock:
-            cached = self.shared_cache.get(key)
+            cached = cache.get(key)
             if cached is not None:
+                if expert:
+                    cache.move_to_end(key)
                 return cached
-            meta = self.manifest["tensors"][key]
-            result = self._dequantize(meta)
-            self.shared_cache[key] = result
+            result = self._dequantize(self.manifest["tensors"][key])
+            cache[key] = result
+            if expert:
+                cache.move_to_end(key)
+                while len(cache) > self.max_expert_tensors:
+                    cache.popitem(last=False)
             return result
 
 
@@ -89,7 +70,7 @@ class CloudDemoAI:
         self.root = root
         self.store = QuantStore(
             root,
-            max_expert_tensors=int(os.getenv("DEMO_AI_EXPERT_CACHE_TENSORS", "72")),
+            max_expert_tensors=int(os.getenv("DEMO_AI_EXPERT_CACHE_TENSORS", "48")),
         )
         cfg = self.store.manifest["config"]
         self.model_name = self.store.manifest.get("model", "demo-ai-100m-moe")
@@ -112,32 +93,41 @@ class CloudDemoAI:
             1.0
             / (
                 self.theta
-                ** (
-                    np.arange(0, self.head_dim, 2, dtype=np.float32)
-                    / self.head_dim
-                )
+                ** (np.arange(0, self.head_dim, 2, dtype=np.float32) / self.head_dim)
             )
         ).astype(np.float32)
+
+        # Precompute rotary tables once. This removes sin/cos work from every token.
+        positions = np.arange(self.context_length, dtype=np.float32)[:, None]
+        angles = positions * self.inv_freq[None, :]
+        rotary = np.empty((self.context_length, self.head_dim), dtype=np.float32)
+        rotary[:, 0::2] = np.cos(angles)
+        rotary[:, 1::2] = np.cos(angles)
+        self.rope_cos = rotary
+        self.rope_sin = np.empty_like(rotary)
+        self.rope_sin[:, 0::2] = np.sin(angles)
+        self.rope_sin[:, 1::2] = np.sin(angles)
+
+        self.gqa_index = np.repeat(
+            np.arange(self.n_kv_heads, dtype=np.int32),
+            self.n_heads // self.n_kv_heads,
+        )
 
     @staticmethod
     def rmsnorm(x, w):
         xf = x.astype(np.float32, copy=False)
-        y = xf / np.sqrt(np.mean(xf * xf, axis=-1, keepdims=True) + 1e-6)
-        return y * w
+        return xf / np.sqrt(np.mean(xf * xf, axis=-1, keepdims=True) + 1e-6) * w
 
     @staticmethod
     def linear(x, w):
         return x @ w.T
 
     def rope(self, x, pos):
-        t = np.arange(pos, pos + x.shape[1], dtype=np.float32)[:, None]
-        freqs = t * self.inv_freq[None, :]
-        emb = np.stack((freqs, freqs), axis=-1).reshape(x.shape[1], self.head_dim)
-        c = np.cos(emb)[None, :, :]
-        s = np.sin(emb)[None, :, :]
+        cos = self.rope_cos[pos : pos + x.shape[1]][None, :, :]
+        sin = self.rope_sin[pos : pos + x.shape[1]][None, :, :]
         even, odd = x[..., 0::2], x[..., 1::2]
         rotated = np.stack((-odd, even), axis=-1).reshape(x.shape)
-        return x * c + rotated * s
+        return x * cos + rotated * sin
 
     @staticmethod
     def softmax(x):
@@ -146,12 +136,13 @@ class CloudDemoAI:
         return e / e.sum(axis=-1, keepdims=True)
 
     def sparse_moe_token(self, x, prefix):
-        router_w = self.store.weight(prefix + ".moe.router.weight")
-        probs = self.softmax(self.linear(x, router_w))[0]
+        probs = self.softmax(
+            self.linear(x, self.store.weight(prefix + ".moe.router.weight"))
+        )[0]
         top_ids = np.argpartition(probs, -self.top_k)[-self.top_k:]
         top_ids = top_ids[np.argsort(probs[top_ids])[::-1]]
         top_scores = probs[top_ids]
-        top_scores = top_scores / max(float(top_scores.sum()), 1e-9)
+        top_scores /= max(float(top_scores.sum()), 1e-9)
         out = np.zeros_like(x, dtype=np.float32)
 
         for expert_id, mix in zip(top_ids.tolist(), top_scores.tolist()):
@@ -160,77 +151,89 @@ class CloudDemoAI:
             up = self.linear(x, self.store.weight(ep + ".up.weight"))
             swish = gate / (1.0 + np.exp(-np.clip(gate, -40.0, 40.0)))
             ff = swish * up
-            expert_out = self.linear(ff, self.store.weight(ep + ".down.weight"))
-            out += float(mix) * expert_out
+            out += float(mix) * self.linear(ff, self.store.weight(ep + ".down.weight"))
         return out
 
-    def run_token(self, token_id, pos, caches):
+    def run_token(self, token_id, pos, keys_cache, values_cache):
         x = self.store.weight("tok_emb.weight")[token_id][None, :]
 
         for li in range(self.n_layers):
             prefix = f"blocks.{li}"
             n1 = self.rmsnorm(x, self.store.weight(prefix + ".norm1.weight"))
-            q = self.linear(
-                n1, self.store.weight(prefix + ".attn.q_proj.weight")
-            ).reshape(1, self.n_heads, self.head_dim).transpose(1, 0, 2)
-            k = self.linear(
-                n1, self.store.weight(prefix + ".attn.k_proj.weight")
-            ).reshape(1, self.n_kv_heads, self.head_dim).transpose(1, 0, 2)
-            v = self.linear(
-                n1, self.store.weight(prefix + ".attn.v_proj.weight")
-            ).reshape(1, self.n_kv_heads, self.head_dim).transpose(1, 0, 2)
+            q = self.linear(n1, self.store.weight(prefix + ".attn.q_proj.weight"))
+            k = self.linear(n1, self.store.weight(prefix + ".attn.k_proj.weight"))
+            v = self.linear(n1, self.store.weight(prefix + ".attn.v_proj.weight"))
+            q = self.rope(
+                q.reshape(1, self.n_heads, self.head_dim).transpose(1, 0, 2), pos
+            )
+            k = self.rope(
+                k.reshape(1, self.n_kv_heads, self.head_dim).transpose(1, 0, 2), pos
+            )
+            v = v.reshape(1, self.n_kv_heads, self.head_dim).transpose(1, 0, 2)
 
-            q = self.rope(q, pos)
-            k = self.rope(k, pos)
-            if caches[li] is None:
-                keys, values = k, v
-            else:
-                past_k, past_v = caches[li]
-                keys = np.concatenate([past_k, k], axis=1)
-                values = np.concatenate([past_v, v], axis=1)
-            caches[li] = (keys, values)
+            keys_cache[li][:, pos : pos + 1, :] = k
+            values_cache[li][:, pos : pos + 1, :] = v
+            keys = keys_cache[li][:, : pos + 1, :]
+            values = values_cache[li][:, : pos + 1, :]
 
-            key_attn = np.repeat(keys, self.n_heads // self.n_kv_heads, axis=0)
-            value_attn = np.repeat(values, self.n_heads // self.n_kv_heads, axis=0)
+            key_attn = keys[self.gqa_index]
+            value_attn = values[self.gqa_index]
             scores = np.matmul(q, key_attn.transpose(0, 2, 1)) / math.sqrt(self.head_dim)
             attn = self.softmax(scores)
-            attn_out = (
-                np.matmul(attn, value_attn)
-                .transpose(1, 0, 2)
-                .reshape(1, self.emb_dim)
-            )
+            attn_out = np.matmul(attn, value_attn).transpose(1, 0, 2).reshape(1, self.emb_dim)
             x = x + self.linear(
-                attn_out,
-                self.store.weight(prefix + ".attn.out_proj.weight"),
+                attn_out, self.store.weight(prefix + ".attn.out_proj.weight")
             )
 
             n2 = self.rmsnorm(x, self.store.weight(prefix + ".norm2.weight"))
             x = x + self.sparse_moe_token(n2, prefix)
 
-        x = self.rmsnorm(x, self.store.weight("final_norm.weight"))
+        return self.rmsnorm(x, self.store.weight("final_norm.weight"))
+
+    def logits(self, x):
         return self.linear(x, self.store.weight("tok_emb.weight"))[0]
 
-    def generate(self, prompt, max_new=20, temperature=0.7, top_k=24, seed=None):
-        max_new = max(1, min(int(max_new), 32))
+    def generate(
+        self,
+        prompt,
+        max_new=12,
+        temperature=0.7,
+        top_k=16,
+        seed=None,
+        max_prompt_tokens=256,
+    ):
+        max_new = max(1, min(int(max_new), 24))
         temperature = max(0.05, min(float(temperature), 1.5))
         top_k = max(1, min(int(top_k), min(64, self.valid_vocab)))
-        prompt_ids = self.sp.encode(prompt, out_type=int)[-self.context_length:]
+
+        prompt_ids = self.sp.encode(prompt, out_type=int)
+        prompt_ids = prompt_ids[-min(self.context_length - 1, int(max_prompt_tokens)) :]
         prompt_ids = prompt_ids or [self.sp.bos_id()]
-        caches = [None] * self.n_layers
+
+        # Fixed-size KV buffers eliminate concatenate/copy churn on every token.
+        keys_cache = [
+            np.empty((self.n_kv_heads, self.context_length, self.head_dim), dtype=np.float32)
+            for _ in range(self.n_layers)
+        ]
+        values_cache = [
+            np.empty((self.n_kv_heads, self.context_length, self.head_dim), dtype=np.float32)
+            for _ in range(self.n_layers)
+        ]
 
         for pos, token in enumerate(prompt_ids[:-1]):
-            self.run_token(token, pos, caches)
+            self.run_token(token, pos, keys_cache, values_cache)
 
         last_pos = len(prompt_ids) - 1
-        next_logits = self.run_token(prompt_ids[-1], last_pos, caches)
+        hidden = self.run_token(prompt_ids[-1], last_pos, keys_cache, values_cache)
+        next_logits = self.logits(hidden)
         generated = []
         rng = np.random.default_rng(
             secrets.randbits(32) if seed is None else int(seed)
         )
 
-        for _ in range(max_new):
+        for step in range(max_new):
             scores = next_logits / temperature
-            scores[self.valid_vocab:] = -np.inf
+            scores[self.valid_vocab :] = -np.inf
             k = min(top_k, self.valid_vocab)
             idx = np.argpartition(scores, -k)[-k:]
             vals = scores[idx]
@@ -238,15 +241,16 @@ class CloudDemoAI:
             probs /= probs.sum()
             token = int(rng.choice(idx, p=probs))
             generated.append(token)
-            if token == self.sp.eos_id():
-                break
-            if len(prompt_ids) + len(generated) >= self.context_length:
-                break
-            next_logits = self.run_token(
-                token, last_pos + len(generated), caches
-            )
 
-        return self.sp.decode(generated)
+            if token == self.sp.eos_id() or last_pos + step + 1 >= self.context_length - 1:
+                break
+
+            next_pos = last_pos + step + 1
+            hidden = self.run_token(token, next_pos, keys_cache, values_cache)
+            next_logits = self.logits(hidden)
+
+        text = self.sp.decode(generated).strip()
+        return text or "."
 
 
 _model = None
