@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from api.common import handle_chat, json_response
+from api.common import client_key, generate_api_key, handle_chat, json_response, rate_limiter
 
 ROOT = Path(__file__).resolve().parent
 
@@ -101,9 +101,31 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/key":
-            from api.key import generate_key_response
-
-            generate_key_response(self)
+            try:
+                if not rate_limiter.allow("key:" + client_key(self), 5):
+                    json_response(
+                        self,
+                        {"error": "rate_limited", "retry_after_seconds": 60},
+                        429,
+                        {"Retry-After": "60"},
+                    )
+                    return
+                key = generate_api_key()
+                json_response(
+                    self,
+                    {
+                        "key": key,
+                        "type": "DEMO_AI_KEY",
+                        "note": "Store this key securely. This hosted demo keeps key validation in deployment memory.",
+                    },
+                    201,
+                )
+            except Exception as exc:
+                json_response(
+                    self,
+                    {"error": "key_service_unavailable", "message": str(exc)},
+                    503,
+                )
             return
 
         json_response(self, {"ok": False, "error": "not_found"}, 404)
