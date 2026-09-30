@@ -28,6 +28,12 @@ jobs:
         run: PYTHONPATH=. python tests/test_moe.py
       - name: Build and quantize cloud runtime
         run: PYTHONPATH=. DEMO_AI_BOOTSTRAP_STEPS=32 python scripts/build_cloud_model.py
+      - name: Test real quantized runtime generation
+        env:
+          PYTHONPATH: .
+          DEMO_AI_MODEL_DIR: api/model
+          DEMO_AI_EXPERT_CACHE_TENSORS: "72"
+        run: python tests/test_runtime.py
       - name: Publish cloud runtime release
         uses: softprops/action-gh-release@v2
         with:
