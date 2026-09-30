@@ -2,3 +2,4 @@
 torch==2.8.0+cpu
 numpy==2.2.5
 sentencepiece==0.2.0
+safetensors==0.5.3
