@@ -25,11 +25,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.8.0+cpu numpy==2.2.5 sentencepiece==0.2.0
       - name: Verify exact sparse-MoE architecture
-        run: python tests/test_moe.py
+        run: PYTHONPATH=. python tests/test_moe.py
       - name: Build and quantize cloud runtime
-        env:
-          DEMO_AI_BOOTSTRAP_STEPS: "32"
-        run: python scripts/build_cloud_model.py
+        run: PYTHONPATH=. DEMO_AI_BOOTSTRAP_STEPS=32 python scripts/build_cloud_model.py
       - name: Publish cloud runtime release
         uses: softprops/action-gh-release@v2
         with:
