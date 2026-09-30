@@ -1,71 +1,25 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Demo AI — a portable 100M-parameter language model for coding, general use, and reasoning experiments.">
-<title>Demo AI — 100M Parameter Model</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Demo AI — chat with the 100M parameter Demo AI model in the cloud, no API key required.">
+<title>Demo AI — Cloud Chat</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header class="nav">
-  <a class="brand" href="#">Demo AI</a>
-  <nav>
-    <a href="#model">Model</a><a href="#api">API</a><a href="#docs">Docs</a>
-    <a href="https://github.com/Errordevz/demo-ai" target="_blank" rel="noreferrer">GitHub ↗</a>
-  </nav>
-</header>
+<header class="topbar"><a class="brand" href="#chat">Demo AI</a><nav><a href="#chat">Chat</a><a href="#model">Model</a><a href="#api">API</a><a href="#docs">Docs</a><a href="https://github.com/Errordevz/demo-ai" target="_blank" rel="noreferrer">GitHub ↗</a></nav></header>
 <main>
-<section class="hero">
-  <span class="eyebrow">OPEN MODEL · 100M PARAMETERS</span>
-  <h1>A small model.<br><span>Built to be yours.</span></h1>
-  <p>Demo AI is a portable 100M-parameter language model for coding, general language tasks, and reasoning experiments.</p>
-  <div class="actions">
-    <a class="button primary" href="https://github.com/Errordevz/demo-ai/releases/latest/download/demo-ai-100m-portable.zip">Download Demo AI</a>
-    <a class="button" href="https://github.com/Errordevz/demo-ai" target="_blank" rel="noreferrer">View source</a>
-  </div>
-  <p class="note">Local download · No API key required</p>
+<section class="hero" id="chat">
+<div class="hero-copy"><div class="eyebrow"><span class="dot"></span>CLOUD RUNTIME · NO API KEY REQUIRED</div><h1>Talk to <span>Demo AI.</span></h1><p>Chat directly with your own 100M-parameter model running in the cloud.</p><div class="chips"><span>100M parameters</span><span>1,024 context</span><span>GQA + RoPE</span></div></div>
+<div class="chat-shell"><div class="chat-head"><div><strong>Demo AI</strong><small id="statusText">Connecting…</small></div><button id="clearBtn" class="ghost">Clear</button></div><div id="messages" class="messages"><div class="message assistant"><div class="avatar">D</div><div class="bubble">Hey 👋 I’m Demo AI. Ask me something.</div></div></div><div class="composer"><textarea id="input" rows="1" placeholder="Message Demo AI…"></textarea><button id="sendBtn" class="send">Send</button></div><div class="composer-note">Web chat is public and does not require <code>DEMO_AI_KEY</code>.</div></div>
 </section>
-<section class="grid" id="model">
-  <article><b>100M</b><span>Exact parameter count</span></article>
-  <article><b>1,024</b><span>Token context</span></article>
-  <article><b>GQA</b><span>Efficient attention</span></article>
-  <article><b>Local-first</b><span>Portable PyTorch package</span></article>
-</section>
-<section class="section">
-  <div><span class="eyebrow">ARCHITECTURE</span><h2>Compact, modern Transformer.</h2></div>
-  <div class="cards">
-    <div><h3>Decoder-only</h3><p>Autoregressive Transformer architecture designed for next-token generation.</p></div>
-    <div><h3>GQA + RoPE</h3><p>Grouped-query attention and rotary position embeddings keep the architecture efficient.</p></div>
-    <div><h3>SwiGLU + RMSNorm</h3><p>Modern building blocks with tied input/output embeddings.</p></div>
-  </div>
-</section>
-<section class="section api" id="api">
-  <div><span class="eyebrow">DEVELOPER API</span><h2>One key. Your applications.</h2>
-  <p>The hosted API uses <code>DEMO_AI_KEY</code>. Keys should be generated server-side from cryptographically random bytes, shown once, and stored only as hashes.</p></div>
-  <div class="keybox">
-    <code>DEMO_AI_KEY=••••••••••••••••••••</code>
-    <span>Hosted API · planned</span>
-  </div>
-</section>
-<section class="section" id="docs">
-  <span class="eyebrow">GET STARTED</span>
-  <h2>Run it locally.</h2>
-  <pre><code>unzip demo-ai-100m-portable.zip
-cd demo-ai-100m-portable
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python smoke_test.py
-python run_local.py --prompt "Write a Python function that reverses a linked list."</code></pre>
-  <p class="note">The current checkpoint is a development model. It is portable and runnable, but it is not yet a frontier-grade or professionally trained model.</p>
-</section>
-<section class="cta">
-  <h2>Build with Demo AI.</h2>
-  <p>Source, training code, model artifacts, and documentation in one place.</p>
-  <a class="button primary" href="https://github.com/Errordevz/demo-ai" target="_blank" rel="noreferrer">Open GitHub ↗</a>
-</section>
-</main>
-<footer>Demo AI · Open development project</footer>
-</body>
-</html>
+<section class="section" id="model"><div class="section-head"><div><div class="eyebrow">MODEL</div><h2>A real model, not a fake chat shell.</h2></div><p>Demo AI uses the 100M development checkpoint with a custom decoder-only Transformer runtime.</p></div><div class="grid"><article><b>100M</b><span>Exact parameter count</span></article><article><b>1,024</b><span>Context window</span></article><article><b>8 / 2</b><span>Query / KV heads</span></article><article><b>INT4</b><span>Cloud weight packaging</span></article></div><div class="cards"><article><h3>SwiGLU + RMSNorm</h3><p>Modern Transformer components, preserved from the Demo AI architecture.</p></article><article><h3>Cloud inference</h3><p>Vercel runs the Python inference function; the public chat path does not ask users for an API key.</p></article><article><h3>Honest status</h3><p>This checkpoint is still a development model. Cloud availability does not mean frontier-level quality.</p></article></div></section>
+<section class="section api-section" id="api"><div class="section-head"><div><div class="eyebrow">DEVELOPER API</div><h2>Build on Demo AI.</h2></div><p>The website chat is keyless. Programmatic calls use <code>DEMO_AI_KEY</code>.</p></div><div class="api-card"><div><h3>Your developer key</h3><p>Generate a cryptographically random key signed by the deployment. The secret is shown once.</p><button id="keyBtn" class="button primary">Generate DEMO_AI_KEY</button></div><div id="keyOut" class="key-output">No key generated yet.</div></div><pre><code>POST /api/v1/chat
+Authorization: Bearer DEMO_AI_KEY
+Content-Type: application/json
+
+{"messages":[{"role":"user","content":"Hello"}]}</code></pre></section>
+<section class="section" id="docs"><div class="eyebrow">DOCS</div><h2>What is running here?</h2><div class="docs"><div><strong>Public chat</strong><p><code>/api/chat</code> — no API key required. A small in-memory rate limiter protects the demo.</p></div><div><strong>Developer API</strong><p><code>/api/v1/chat</code> — requires a signed <code>DEMO_AI_KEY</code>.</p></div><div><strong>Health</strong><p><code>/api/status</code> — reports model and service state without exposing secrets.</p></div></div></section>
+</main><footer>Demo AI · 100M development model · Built from the Demo AI project</footer>
+<script src="app.js"></script>
+</body></html>
