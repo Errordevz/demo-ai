@@ -19,7 +19,7 @@ def parse_json(h):
     if n<=0 or n>256000: raise ValueError("Request body is missing or too large.")
     return json.loads(h.rfile.read(n).decode())
 
-def client_key(h): return h.headers.get("X-Demo-Session","anonymous")[:128]
+def client_key(h):\n    # Vercel supplies x-forwarded-for; unlike a browser-provided session ID it cannot be rotated per request by the visitor.\n    forwarded=h.headers.get("X-Forwarded-For","").split(",")[0].strip()\n    return ("ip:"+forwarded if forwarded else "session:"+h.headers.get("X-Demo-Session","anonymous"))[:128]
 
 def _digest(value):
     return hashlib.sha256(value.encode("utf-8")).digest()
