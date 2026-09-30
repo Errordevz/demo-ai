@@ -21,8 +21,9 @@ def main():
     elapsed = time.perf_counter() - started
     assert isinstance(text, str)
     assert text.strip(), "runtime returned an empty response"
+    assert elapsed < 30, f"runtime too slow: {elapsed:.3f}s"
     print("PASS runtime response:", repr(text))
-    assert elapsed < 30, f"runtime too slow: {elapsed:.3f}s"\n    print("PASS runtime seconds:", round(elapsed, 3))
+    print("PASS runtime seconds:", round(elapsed, 3))
 
 
 if __name__ == "__main__":
