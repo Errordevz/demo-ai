@@ -1,6 +1,6 @@
 {
   "$schema":"https://openapi.vercel.sh/vercel.json",
   "fluid":true,
-  "buildCommand":"python scripts/build_cloud_model.py",
-  "functions":{"api/**/*.py":{"memory":3009,"maxDuration":60}}
+  "buildCommand":"python scripts/fetch_cloud_artifact.py",
+  "functions":{"api/**/*.py":{"memory":2048,"maxDuration":60}}
 }
