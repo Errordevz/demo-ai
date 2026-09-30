@@ -7,7 +7,7 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             if not rate_limiter.allow("key:"+client_key(self),5):
-                json_response(self,{"error":"rate_limited"},429,{"Retry-After":"60"}); return
+                json_response(self,{"error":"rate_limited","retry_after_seconds":60},429,{"Retry-After":"60"}); return
             key=generate_api_key()
             json_response(self,{"key":key,"type":"DEMO_AI_KEY","note":"Store this key securely. This hosted demo keeps key validation in deployment memory."},201)
         except Exception as e:
