@@ -1,11 +1,18 @@
 from __future__ import annotations
-import json, math, secrets, threading
+
+import json
+import math
+import secrets
+import threading
 from pathlib import Path
+
 import numpy as np
 import sentencepiece as spm
 
+
 ROOT = Path(__file__).resolve().parent
 MODEL_DIR = Path(__import__("os").getenv("DEMO_AI_MODEL_DIR", ROOT / "model"))
+
 
 class QuantStore:
     def __init__(self, root: Path):
@@ -17,13 +24,17 @@ class QuantStore:
         if key in self.cache:
             return self.cache[key]
         meta = self.manifest["tensors"][key]
-        raw = np.frombuffer(self.mm, dtype=np.uint8, count=meta["nbytes"], offset=meta["offset"])
-        lo = raw & 0x0F
-        hi = raw >> 4
+        raw = np.frombuffer(
+            self.mm,
+            dtype=np.uint8,
+            count=meta["nbytes"],
+            offset=meta["offset"],
+        )
+        lo, hi = raw & 0x0F, raw >> 4
         vals = np.empty(raw.size * 2, dtype=np.int8)
         vals[0::2] = lo.astype(np.int8) - 8
         vals[1::2] = hi.astype(np.int8) - 8
-        vals = vals[:meta["count"]].reshape(meta["shape"])
+        vals = vals[: meta["count"]].reshape(meta["shape"])
         scales = np.frombuffer(
             self.mm,
             dtype=np.float32,
@@ -31,30 +42,36 @@ class QuantStore:
             offset=meta["scale_offset"],
         )
         if meta.get("ndim", len(meta["shape"])) == 1:
-            w = (vals.astype(np.float16) * scales.astype(np.float16)).astype(np.float16)
+            result = (vals.astype(np.float16) * scales.astype(np.float16)).astype(np.float16)
         else:
-            w = (
+            result = (
                 vals.astype(np.float16) * scales.astype(np.float16)[:, None]
             ).astype(np.float16)
-        self.cache[key] = w
-        return w
+        self.cache[key] = result
+        return result
+
 
 class CloudDemoAI:
     def __init__(self, root: Path):
         self.root = root
         self.store = QuantStore(root)
         cfg = self.store.manifest["config"]
+        self.model_name = self.store.manifest.get("model", "demo-ai-100m-moe")
         self.vocab = int(cfg["vocab_size"])
         self.context_length = int(cfg["context_length"])
         self.emb_dim = int(cfg["emb_dim"])
         self.n_layers = int(cfg["n_layers"])
         self.n_heads = int(cfg["n_heads"])
         self.n_kv_heads = int(cfg["n_kv_heads"])
+        self.n_experts = int(cfg["n_experts"])
+        self.top_k = int(cfg["top_k"])
+        self.expert_ffn_dim = int(cfg["expert_ffn_dim"])
         self.head_dim = int(cfg.get("head_dim", self.emb_dim // self.n_heads))
-        self.ffn_dim = int(cfg["ffn_dim"])
         self.theta = float(cfg["rope_theta"])
+        self.active_expert_fraction = self.top_k / self.n_experts
+
         self.sp = spm.SentencePieceProcessor(model_file=str(root / "tokenizer.model"))
-        self.valid_vocab = self.sp.get_piece_size()
+        self.valid_vocab = min(self.sp.get_piece_size(), self.vocab)
         self.inv_freq = (
             1.0
             / (
@@ -82,8 +99,7 @@ class CloudDemoAI:
         emb = np.stack((freqs, freqs), axis=-1).reshape(x.shape[1], self.head_dim)
         c = np.cos(emb)[None, :, :].astype(np.float32)
         s = np.sin(emb)[None, :, :].astype(np.float32)
-        even = x[..., 0::2]
-        odd = x[..., 1::2]
+        even, odd = x[..., 0::2], x[..., 1::2]
         rotated = np.stack((-odd, even), axis=-1).reshape(x.shape)
         return x * c + rotated * s
 
@@ -93,8 +109,28 @@ class CloudDemoAI:
         e = np.exp(x)
         return e / e.sum(axis=-1, keepdims=True)
 
+    def sparse_moe_token(self, x, prefix):
+        router_w = self.store.weight(prefix + ".moe.router.weight")
+        probs = self.softmax(self.linear(x, router_w))[0]
+        top_ids = np.argpartition(probs, -self.top_k)[-self.top_k:]
+        top_ids = top_ids[np.argsort(probs[top_ids])[::-1]]
+        top_scores = probs[top_ids]
+        top_scores = top_scores / max(float(top_scores.sum()), 1e-9)
+        out = np.zeros_like(x, dtype=np.float32)
+
+        for expert_id, mix in zip(top_ids.tolist(), top_scores.tolist()):
+            ep = f"{prefix}.moe.experts.{expert_id}"
+            gate = self.linear(x, self.store.weight(ep + ".gate.weight"))
+            up = self.linear(x, self.store.weight(ep + ".up.weight"))
+            swish = gate / (1.0 + np.exp(-np.clip(gate, -40.0, 40.0)))
+            ff = swish * up
+            expert_out = self.linear(ff, self.store.weight(ep + ".down.weight"))
+            out += float(mix) * expert_out
+        return out
+
     def run_token(self, token_id, pos, caches):
         x = self.store.weight("tok_emb.weight")[token_id].astype(np.float32)[None, :]
+
         for li in range(self.n_layers):
             prefix = f"blocks.{li}"
             n1 = self.rmsnorm(x, self.store.weight(prefix + ".norm1.weight"))
@@ -107,9 +143,9 @@ class CloudDemoAI:
             v = self.linear(n1, self.store.weight(prefix + ".attn.v_proj.weight")).reshape(
                 1, self.n_kv_heads, self.head_dim
             ).transpose(1, 0, 2)
+
             q = self.rope(q, pos)
             k = self.rope(k, pos)
-
             if caches[li] is None:
                 keys, values = k, v
             else:
@@ -122,15 +158,18 @@ class CloudDemoAI:
             value_attn = np.repeat(values, self.n_heads // self.n_kv_heads, axis=0)
             scores = np.matmul(q, key_attn.transpose(0, 2, 1)) / math.sqrt(self.head_dim)
             attn = self.softmax(scores)
-            attn_out = np.matmul(attn, value_attn).transpose(1, 0, 2).reshape(1, self.emb_dim)
-            x = x + self.linear(attn_out, self.store.weight(prefix + ".attn.out_proj.weight"))
+            attn_out = (
+                np.matmul(attn, value_attn)
+                .transpose(1, 0, 2)
+                .reshape(1, self.emb_dim)
+            )
+            x = x + self.linear(
+                attn_out,
+                self.store.weight(prefix + ".attn.out_proj.weight"),
+            )
 
             n2 = self.rmsnorm(x, self.store.weight(prefix + ".norm2.weight"))
-            gate = self.linear(n2, self.store.weight(prefix + ".ffn.gate.weight"))
-            up = self.linear(n2, self.store.weight(prefix + ".ffn.up.weight"))
-            swish = gate / (1.0 + np.exp(-np.clip(gate, -40.0, 40.0)))
-            ff = swish * up
-            x = x + self.linear(ff, self.store.weight(prefix + ".ffn.down.weight"))
+            x = x + self.sparse_moe_token(n2, prefix)
 
         x = self.rmsnorm(x, self.store.weight("final_norm.weight"))
         return self.linear(x, self.store.weight("tok_emb.weight"))[0]
@@ -149,7 +188,9 @@ class CloudDemoAI:
         last_pos = len(prompt_ids) - 1
         next_logits = self.run_token(prompt_ids[-1], last_pos, caches)
         generated = []
-        rng = np.random.default_rng(secrets.randbits(32) if seed is None else int(seed))
+        rng = np.random.default_rng(
+            secrets.randbits(32) if seed is None else int(seed)
+        )
 
         for _ in range(max_new):
             scores = next_logits / temperature
@@ -165,12 +206,16 @@ class CloudDemoAI:
                 break
             if len(prompt_ids) + len(generated) >= self.context_length:
                 break
-            next_logits = self.run_token(token, last_pos + len(generated), caches)
+            next_logits = self.run_token(
+                token, last_pos + len(generated), caches
+            )
 
         return self.sp.decode(generated)
 
+
 _model = None
 _lock = threading.Lock()
+
 
 def get_model():
     global _model
@@ -179,6 +224,7 @@ def get_model():
             if _model is None:
                 _model = CloudDemoAI(MODEL_DIR)
     return _model
+
 
 class RateLimiter:
     def __init__(self):
@@ -197,9 +243,15 @@ class RateLimiter:
             self.hits[key] = recent
             return True
 
+
 rate_limiter = RateLimiter()
 
-SYSTEM = "You are Demo AI, a compact 100M-parameter language model. Be helpful, direct, and concise. Do not claim capabilities you do not have."
+SYSTEM = (
+    "You are Demo AI, a compact 100M-parameter sparse Mixture-of-Experts "
+    "language model. Be helpful, direct, and concise. Do not claim capabilities "
+    "you do not have."
+)
+
 
 def build_prompt(messages):
     parts = [f"### System\n{SYSTEM}\n"]
