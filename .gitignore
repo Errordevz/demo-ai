@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+api/model/weights.bin
+api/model/manifest.json
+api/model/tokenizer.model
+build/
