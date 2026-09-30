@@ -18,12 +18,13 @@ Content-Type: application/json
 
 Keys are generated and validated in deployment memory. They are shown once and are lost when the service restarts/redeploys; this hosted demo does not yet provide durable key storage.
 
-## Hosting
+## Hosting architecture
 
-The repository contains both a Vercel configuration and a Render Docker configuration.
+The GitHub Actions workflow builds and publishes the cloud INT4 model artifact using CPU-only PyTorch. Vercel then downloads that prebuilt artifact during its deployment, so Vercel does **not** need PyTorch or model training at build time.
 
-- Vercel can host the static site and Python functions, but building a 100M model at deployment time is resource-intensive.
-- Render's free web service can run the complete Docker app for hobby/testing use. Free services have 512 MB RAM, 0.1 CPU, and spin down after 15 minutes of inactivity.
+The hosted inference runtime is pure NumPy + SentencePiece and uses the quantized model artifact.
+
+The repository also contains a Render multi-stage Docker configuration for a single-service deployment. Its runtime image does not include PyTorch; PyTorch is only used in the build stage to create the quantized artifact.
 
 ## Model
 
