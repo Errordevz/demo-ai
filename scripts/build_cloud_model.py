@@ -1,10 +1,9 @@
 from __future__ import annotations
-import json, random, shutil, struct, subprocess, zipfile
+import json, random, shutil, zipfile
 from pathlib import Path
 import numpy as np
 import sentencepiece as spm
 import torch
-from safetensors.torch import load_file, save_file
 from demo_ai import DemoAI, ModelConfig, count_parameters
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -54,7 +53,6 @@ for step in range(256):
     if step%32==0: print("step",step,"loss",float(loss),flush=True)
 model.eval()
 state=model.state_dict(); unique={k:v.half().cpu() for k,v in state.items() if k!="lm_head.weight"}
-save_file(unique,str(BUILD/"fp16.safetensors"))
 # Row-wise symmetric INT4. Tied embedding is stored once.
 manifest={"format":"demo-ai-cloud-int4-v1","config":cfg.to_dict(),"tensors":{}}
 with open(ART/"weights.bin","wb") as out:
@@ -68,7 +66,12 @@ with open(ART/"weights.bin","wb") as out:
 (ART/"manifest.json").write_text(json.dumps(manifest,separators=(",",":")),encoding="utf-8")
 shutil.copy2(tokenizer,ART/"tokenizer.model")
 (ART/"config.json").write_text(json.dumps(cfg.to_dict(),indent=2)+"\n",encoding="utf-8")
+MODEL_DIR=ROOT/"api"/"model"
+if MODEL_DIR.exists():
+    shutil.rmtree(MODEL_DIR)
+shutil.copytree(ART,MODEL_DIR)
 release=BUILD/"demo-ai-cloud-runtime.zip"
 with zipfile.ZipFile(release,"w",compression=zipfile.ZIP_STORED) as z:
     for p in ART.iterdir(): z.write(p,p.name)
 print("built",release,release.stat().st_size,"bytes")
+print("deployment model ready:",MODEL_DIR)
