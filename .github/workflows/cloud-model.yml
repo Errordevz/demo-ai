@@ -20,8 +20,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install torch==2.8.0 numpy==2.2.5 sentencepiece==0.2.0 safetensors==0.5.3
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.8.0+cpu numpy==2.2.5 sentencepiece==0.2.0
       - name: Build and quantize model
         run: python scripts/build_cloud_model.py
       - name: Publish cloud runtime release
@@ -34,4 +36,4 @@ jobs:
           files: build/demo-ai-cloud-runtime.zip
           overwrite_files: true
         env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
