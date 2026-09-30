@@ -126,10 +126,10 @@ def handle_chat(h, require_key=False):
             raise ValueError("No usable messages were provided.")
 
         model = get_model()
-        requested_max = int(data.get("max_new", 20))
-        max_new = min(max(requested_max, 1), 64 if require_key else 24)
-        requested_top_k = int(data.get("top_k", 24))
-        top_k = min(max(requested_top_k, 1), 64)
+        requested_max = int(data.get("max_new", 12))
+        max_new = min(max(requested_max, 1), 24 if require_key else 12)
+        requested_top_k = int(data.get("top_k", 16))
+        top_k = min(max(requested_top_k, 1), 32)
 
         # Demo AI is CPU-hosted on a small instance. Serialize generation so
         # simultaneous requests cannot multiply CPU/RAM pressure.
@@ -140,6 +140,7 @@ def handle_chat(h, require_key=False):
                 temperature=data.get("temperature", 0.7),
                 top_k=top_k,
                 seed=data.get("seed"),
+                max_prompt_tokens=256,
             )
         model = get_model()
         json_response(
