@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Demo AI — a portable 100M-parameter language model for coding, general use, and reasoning experiments.">
+<title>Demo AI — 100M Parameter Model</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="#">Demo AI</a>
+  <nav>
+    <a href="#model">Model</a><a href="#api">API</a><a href="#docs">Docs</a>
+    <a href="https://github.com/Errordevz/demo-ai" target="_blank" rel="noreferrer">GitHub ↗</a>
+  </nav>
+</header>
+<main>
+<section class="hero">
+  <span class="eyebrow">OPEN MODEL · 100M PARAMETERS</span>
+  <h1>A small model.<br><span>Built to be yours.</span></h1>
+  <p>Demo AI is a portable 100M-parameter language model for coding, general language tasks, and reasoning experiments.</p>
+  <div class="actions">
+    <a class="button primary" href="https://github.com/Errordevz/demo-ai/releases/latest/download/demo-ai-100m-portable.zip">Download Demo AI</a>
+    <a class="button" href="https://github.com/Errordevz/demo-ai" target="_blank" rel="noreferrer">View source</a>
+  </div>
+  <p class="note">Local download · No API key required</p>
+</section>
+<section class="grid" id="model">
+  <article><b>100M</b><span>Exact parameter count</span></article>
+  <article><b>1,024</b><span>Token context</span></article>
+  <article><b>GQA</b><span>Efficient attention</span></article>
+  <article><b>Local-first</b><span>Portable PyTorch package</span></article>
+</section>
+<section class="section">
+  <div><span class="eyebrow">ARCHITECTURE</span><h2>Compact, modern Transformer.</h2></div>
+  <div class="cards">
+    <div><h3>Decoder-only</h3><p>Autoregressive Transformer architecture designed for next-token generation.</p></div>
+    <div><h3>GQA + RoPE</h3><p>Grouped-query attention and rotary position embeddings keep the architecture efficient.</p></div>
+    <div><h3>SwiGLU + RMSNorm</h3><p>Modern building blocks with tied input/output embeddings.</p></div>
+  </div>
+</section>
+<section class="section api" id="api">
+  <div><span class="eyebrow">DEVELOPER API</span><h2>One key. Your applications.</h2>
+  <p>The hosted API uses <code>DEMO_AI_KEY</code>. Keys should be generated server-side from cryptographically random bytes, shown once, and stored only as hashes.</p></div>
+  <div class="keybox">
+    <code>DEMO_AI_KEY=••••••••••••••••••••</code>
+    <span>Hosted API · planned</span>
+  </div>
+</section>
+<section class="section" id="docs">
+  <span class="eyebrow">GET STARTED</span>
+  <h2>Run it locally.</h2>
+  <pre><code>unzip demo-ai-100m-portable.zip
+cd demo-ai-100m-portable
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python smoke_test.py
+python run_local.py --prompt "Write a Python function that reverses a linked list."</code></pre>
+  <p class="note">The current checkpoint is a development model. It is portable and runnable, but it is not yet a frontier-grade or professionally trained model.</p>
+</section>
+<section class="cta">
+  <h2>Build with Demo AI.</h2>
+  <p>Source, training code, model artifacts, and documentation in one place.</p>
+  <a class="button primary" href="https://github.com/Errordevz/demo-ai" target="_blank" rel="noreferrer">Open GitHub ↗</a>
+</section>
+</main>
+<footer>Demo AI · Open development project</footer>
+</body>
+</html>
