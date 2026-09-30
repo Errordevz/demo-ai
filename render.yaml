@@ -1,8 +1,9 @@
 services:
   - type: web
     name: demo-ai
-    runtime: docker
+    runtime: python
     plan: free
-    dockerfilePath: ./Dockerfile
+    buildCommand: pip install -r requirements.txt && python scripts/fetch_cloud_model.py
+    startCommand: python render_app.py
     healthCheckPath: /api/status
     autoDeployTrigger: commit
